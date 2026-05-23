@@ -8,12 +8,15 @@ export interface BotbuilderUser {
 export interface BotRecord {
   id: string
   userId: string
+  channelId: string
   name: string
   description: string
   serviceId: string
   dashboardUrl: string
   isActive: boolean
   hostingUntil: string
+  /** ISO timestamp of last "expires soon" warning sent to user */
+  warnedAt?: string
   createdAt: string
 }
 
