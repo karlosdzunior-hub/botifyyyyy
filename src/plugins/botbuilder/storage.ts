@@ -56,8 +56,25 @@ export class BotbuilderStorage {
     return bots.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   }
 
+  /** Scan every bot across all users — used by the hosting watchdog. */
+  async getAllActiveBots(): Promise<BotRecord[]> {
+    const keys = await this.kv.keys('bots/')
+    const bots: BotRecord[] = []
+    for (const key of keys) {
+      const bot = await this.kv.get<BotRecord>(key)
+      if (bot && bot.isActive) bots.push(bot)
+    }
+    return bots
+  }
+
   async getBot(userId: string, botId: string): Promise<BotRecord | undefined> {
     return this.kv.get<BotRecord>(`bots/${userId}/${botId}`)
+  }
+
+  async updateBot(userId: string, botId: string, patch: Partial<BotRecord>): Promise<void> {
+    const bot = await this.getBot(userId, botId)
+    if (!bot) return
+    await this.kv.set(`bots/${userId}/${botId}`, { ...bot, ...patch })
   }
 
   async extendHosting(userId: string, botId: string, days: number): Promise<string> {
@@ -70,7 +87,12 @@ export class BotbuilderStorage {
     base.setDate(base.getDate() + days)
     const newUntil = base.toISOString()
 
-    await this.kv.set(`bots/${userId}/${botId}`, { ...bot, hostingUntil: newUntil, isActive: true })
+    await this.kv.set(`bots/${userId}/${botId}`, {
+      ...bot,
+      hostingUntil: newUntil,
+      isActive: true,
+      warnedAt: undefined,
+    })
     return newUntil
   }
 
