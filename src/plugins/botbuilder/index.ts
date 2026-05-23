@@ -2,6 +2,7 @@ import type { OpenACPPlugin } from '../../core/plugin/types.js'
 import { Hook } from '../../core/events.js'
 import { BotbuilderStorage } from './storage.js'
 import { FlowManager } from './flow/flow-manager.js'
+import { HostingWatchdog } from './scheduler/hosting-watchdog.js'
 import { createFlowInterceptor } from './middleware/flow-interceptor.js'
 import { createBotCommand } from './commands/create.js'
 import { improveBotCommand } from './commands/improve.js'
@@ -26,6 +27,8 @@ export interface RailwayConfig {
 }
 
 function createBotbuilderPlugin(): OpenACPPlugin {
+  let watchdog: HostingWatchdog | undefined
+
   return {
     name: '@openacp/botbuilder',
     version: '1.0.0',
@@ -102,22 +105,25 @@ function createBotbuilderPlugin(): OpenACPPlugin {
       }
 
       const railwayCfg: RailwayConfig = {
-        apiToken:  String(s.railwayToken   ?? process.env.RAILWAY_API_TOKEN   ?? ''),
-        projectId: String(s.railwayProject ?? process.env.RAILWAY_PROJECT_ID  ?? ''),
+        apiToken:  String(s.railwayToken   ?? process.env.RAILWAY_API_TOKEN  ?? ''),
+        projectId: String(s.railwayProject ?? process.env.RAILWAY_PROJECT_ID ?? ''),
       }
 
       const yoomoneyWallet = String(s.yoomoneyWallet ?? process.env.YOOMONEY_WALLET ?? '')
 
+      let coreRef: CoreAccess | undefined
+      coreRef = ctx.core as CoreAccess
+
       const storage     = new BotbuilderStorage(ctx.storage)
       const flowManager = new FlowManager(storage, llmCfg, railwayCfg)
 
-      let coreRef: CoreAccess | undefined
-
+      // ─── Middleware: intercept messages for multi-step flows ───
       ctx.registerMiddleware(Hook.MESSAGE_INCOMING, {
         priority: 150,
         handler: createFlowInterceptor(flowManager, () => coreRef!),
       })
 
+      // ─── Commands ───
       ctx.registerCommand(createBotCommand(flowManager))
       ctx.registerCommand(improveBotCommand(flowManager, storage))
       ctx.registerCommand(balanceCommand(storage))
@@ -126,13 +132,23 @@ function createBotbuilderPlugin(): OpenACPPlugin {
       ctx.registerCommand(hostingConfirmCommand(storage))
       ctx.registerCommand(myBotsCommand(storage))
 
+      // ─── Hosting watchdog ───
+      watchdog = new HostingWatchdog(
+        storage,
+        railwayCfg,
+        () => coreRef?.adapters ?? new Map(),
+      )
+      watchdog.start()
+
       ctx.on('plugin:loaded', () => {
         coreRef = ctx.core as CoreAccess
       })
 
-      coreRef = ctx.core as CoreAccess
-
       ctx.log.info('BotBuilder plugin ready — commands: /create-bot /improve-bot /balance /buy /hosting /my-bots')
+    },
+
+    async teardown() {
+      watchdog?.stop()
     },
   }
 }
